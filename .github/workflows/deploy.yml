@@ -23,11 +23,6 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Setup Azure CLI
-        uses: azure/CLI@v1
-        with:
-          azcliversion: 2.59.0
-
       - name: Check if Already Deployed
         id: check
         run: |
