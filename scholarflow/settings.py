@@ -11,9 +11,30 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env file
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+# Access variables from .env
+ES_URL = os.getenv('ES_URL')
+ES_INDEX_NAME = os.getenv('ES_INDEX_NAME')
+QDRANT_URL = os.getenv('QDRANT_URL')
+QDRANT_PORT = os.getenv('QDRANT_PORT')
+REDIS_HOST = os.getenv('REDIS_HOST')
+REDIS_PORT = os.getenv('REDIS_PORT')
+EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL')
+LLAMA_API = os.getenv('LLAMA_API')
+NEO4J_URI = os.getenv('NEO4J_URI')
+NEO4J_USER = os.getenv('NEO4J_USER')
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD')
+CSV_FILE = os.getenv('CSV_FILE')
+NUM_ROWS = int(os.getenv('NUM_ROWS', 1000))  # Default to 1000 if not set
+
 
 
 # Quick-start development settings - unsuitable for production

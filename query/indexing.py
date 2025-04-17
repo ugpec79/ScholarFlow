@@ -9,11 +9,12 @@ def run_indexing():
     import json
     from uuid import UUID
     import traceback
+    from django.conf import settings  # Import settings
 
     CSV_FILE = "cleaned_data.csv"
-    ES_URL = "http://localhost:9200"
-    QDRANT_URL = "localhost"
-    QDRANT_PORT = 6333
+    ES_URL = settings.ES_URL
+    QDRANT_URL = settings.QDRANT_URL
+    QDRANT_PORT = settings.QDRANT_PORT
     ES_INDEX_NAME = "research_papers"
     QDRANT_COLLECTION_NAME = "research_papers"
     EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"

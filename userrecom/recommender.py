@@ -8,6 +8,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import pipeline
 import lightgbm as lgb
+from django.conf import settings  # Import settings
 
 # --- Constants ---
 MODEL_PATH = "models/ltr_model.txt"
@@ -15,7 +16,7 @@ DATA_PATH = "cleaned_data.csv"
 INTERACTIONS_PATH = "user_actions.csv"
 EMBEDDINGS_CACHE = "data/article_embeddings.pkl"
 TOP_N = 10
-LLAMA_API = "http://localhost:11434/api/generate"  # Ollama REST API
+LLAMA_API = settings.LLAMA_API  # Ollama REST API
 
 def generate_llama_explanation(article, user_info):
     prompt = f"""

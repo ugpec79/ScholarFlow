@@ -4,18 +4,18 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import redis
 import requests
-
+from django.conf import settings  # Import settings
 # --- Configuration ---
-ES_URL = "http://localhost:9200"
-QDRANT_URL = "localhost"
-QDRANT_PORT = 6333
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
+ES_URL = settings.ES_URL
+QDRANT_URL = settings.QDRANT_URL
+QDRANT_PORT = settings.QDRANT_PORT
+REDIS_HOST = settings.REDIS_HOST
+REDIS_PORT = settings.REDIS_PORT
 
 ES_INDEX_NAME = "research_papers"
 QDRANT_COLLECTION_NAME = "research_papers"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-LLAMA_API = "http://localhost:11434/api/generate"  # Ollama REST API URL
+LLAMA_API = settings.LLAMA_API  # Ollama REST API URL
 
 # --- Connect to Services ---
 es = Elasticsearch(ES_URL, request_timeout=30)
