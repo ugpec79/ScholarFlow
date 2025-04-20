@@ -18,6 +18,7 @@ driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"
 # Global cache
 paper_embeddings, paper_id_map = None, None
 
+
 def ensure_embeddings():
     global paper_embeddings, paper_id_map
 
@@ -35,7 +36,11 @@ def ensure_embeddings():
         model.eval()
 
         with torch.no_grad():
-            out = model(data.collect('x'), data.collect('edge_index'), data.collect('edge_weight'))
+            out = model(
+                data.collect("x"),
+                data.collect("edge_index"),
+                data.collect("edge_weight"),
+            )
             paper_embeddings = out["Paper"].detach()
             paper_id_map = node_ids["Paper"]
 
@@ -45,6 +50,7 @@ def ensure_embeddings():
             pickle.dump(paper_id_map, f)
 
     return paper_embeddings, paper_id_map
+
 
 def fetch_paper_details(paper_ids):
     papers = {}
@@ -59,6 +65,7 @@ def fetch_paper_details(paper_ids):
             props = record["props"]
             papers[props["_id"]] = props
     return papers
+
 
 def recommend_similar_papers(paper_id, top_k=5):
     if paper_id not in paper_id_map:
@@ -78,7 +85,10 @@ def recommend_similar_papers(paper_id, top_k=5):
                 break
     return recommendations
 
-def generate_llama_explanation(input_paper, recommended_paper, similarity_score, common_connections):
+
+def generate_llama_explanation(
+    input_paper, recommended_paper, similarity_score, common_connections
+):
     # Construct a detailed prompt considering all possible connections
     prompt = f"""
 You are an academic assistant. Explain why the following research paper was recommended based on both semantic similarity and graph-based relationships like common keywords, fields of study (FoS), venues, authors, and citations.
@@ -113,11 +123,15 @@ Graph-based Connections:
 Write a short, human-readable explanation (1–2 sentences) about why this paper is a good match.
 """
     try:
-        response = requests.post(LLAMA_API, json={"model": "llama3.2", "prompt": prompt, "stream": False})
+        response = requests.post(
+            LLAMA_API, json={"model": "llama3.2", "prompt": prompt, "stream": False}
+        )
         return response.json().get("response", "").strip()
     except Exception as e:
         return f"Explanation generation failed: {e}"
 
+
+# !
 def get_recommendations_data(paper_id, top_k=5):
     try:
         ensure_embeddings()
@@ -133,36 +147,49 @@ def get_recommendations_data(paper_id, top_k=5):
 
             # Identify common connections
             common_connections = {
-                'venue': input_paper.get('venue', '') == rec_paper.get('venue', ''),
-                'authors': list(set(input_paper.get('authors', [])) & set(rec_paper.get('authors', []))),
-                'keywords': list(set(input_paper.get('keywords', [])) & set(rec_paper.get('keywords', []))),
-                'fos': list(set(input_paper.get('fos', [])) & set(rec_paper.get('fos', []))),
-                'citation': input_paper.get('citations', 0) > 0 and rec_paper.get('citations', 0) > 0  # This is a simple citation-based check
+                "venue": input_paper.get("venue", "") == rec_paper.get("venue", ""),
+                "authors": list(
+                    set(input_paper.get("authors", []))
+                    & set(rec_paper.get("authors", []))
+                ),
+                "keywords": list(
+                    set(input_paper.get("keywords", []))
+                    & set(rec_paper.get("keywords", []))
+                ),
+                "fos": list(
+                    set(input_paper.get("fos", [])) & set(rec_paper.get("fos", []))
+                ),
+                "citation": input_paper.get("citations", 0) > 0
+                and rec_paper.get("citations", 0)
+                > 0,  # This is a simple citation-based check
             }
 
-            explanation = generate_llama_explanation(input_paper, rec_paper, sim, common_connections)
-            rec_data.append({
-                "id": pid,
-                "similarity": sim,
-                "title": rec_paper.get("title", "Unknown"),
-                "venue": rec_paper.get("venue", ""),
-                "year": rec_paper.get("year", ""),
-                "citations": rec_paper.get("n_citation", 0),
-                "fields": rec_paper.get("fos", []),
-                "keywords": rec_paper.get("keywords", []),
-                "explanation": explanation,
-            })
+            explanation = generate_llama_explanation(
+                input_paper, rec_paper, sim, common_connections
+            )
+            rec_data.append(
+                {
+                    "id": pid,
+                    "similarity": sim,
+                    "title": rec_paper.get("title", "Unknown"),
+                    "venue": rec_paper.get("venue", ""),
+                    "year": rec_paper.get("year", ""),
+                    "citations": rec_paper.get("n_citation", 0),
+                    "explanation": explanation,
+                }
+            )
 
         return {
             "input_paper": {
                 "id": paper_id,
-                "title": input_paper.get("title", "Unknown")
+                "title": input_paper.get("title", "Unknown"),
             },
-            "recommendations": rec_data
+            "recommendations": rec_data,
         }
 
     except Exception as e:
         return {"error": str(e)}
+
 
 # Django view
 def get_recommendations(request, paper_id):

@@ -6,7 +6,6 @@ def run_indexing():
     from qdrant_client.http import models
     from tqdm import tqdm
     import ast
-    import json
     from uuid import UUID
     import traceback
     from django.conf import settings  # Import settings
@@ -29,7 +28,9 @@ def run_indexing():
     qdrant = QdrantClient(host=QDRANT_URL, port=QDRANT_PORT)
 
     # Skip indexing if both exist
-    if es.indices.exists(index=ES_INDEX_NAME) and QDRANT_COLLECTION_NAME in [c.name for c in qdrant.get_collections().collections]:
+    if es.indices.exists(index=ES_INDEX_NAME) and QDRANT_COLLECTION_NAME in [
+        c.name for c in qdrant.get_collections().collections
+    ]:
         print("✅ Index and collection already exist. Skipping indexing.")
         return
 
@@ -41,28 +42,31 @@ def run_indexing():
         print(f"🗑️ Deleting Qdrant collection: {QDRANT_COLLECTION_NAME}")
         qdrant.delete_collection(QDRANT_COLLECTION_NAME)
 
-    es.indices.create(index=ES_INDEX_NAME, body={
-        "mappings": {
-            "properties": {
-                "title": {"type": "text"},
-                "abstract": {"type": "text"},
-                "year": {"type": "integer"},
-                "n_citation": {"type": "integer"},
-                "doi": {"type": "keyword"},
-                "lang": {"type": "keyword"},
-                "keywords": {"type": "keyword"},
-                "fos": {"type": "keyword"},
-                "authors": {"type": "nested"},
-                "venue": {"type": "object"},
-                "references": {"type": "keyword"},
-                "urls": {"type" : "keyword"}
+    es.indices.create(
+        index=ES_INDEX_NAME,
+        body={
+            "mappings": {
+                "properties": {
+                    "title": {"type": "text"},
+                    "abstract": {"type": "text"},
+                    "year": {"type": "integer"},
+                    "n_citation": {"type": "integer"},
+                    "doi": {"type": "keyword"},
+                    "lang": {"type": "keyword"},
+                    "keywords": {"type": "keyword"},
+                    "fos": {"type": "keyword"},
+                    "authors": {"type": "nested"},
+                    "venue": {"type": "object"},
+                    "references": {"type": "keyword"},
+                    "urls": {"type": "keyword"},
+                }
             }
-        }
-    })
+        },
+    )
 
     qdrant.create_collection(
         collection_name=QDRANT_COLLECTION_NAME,
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
+        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
     )
 
     print("🔍 Loading embedding model...")
@@ -77,16 +81,32 @@ def run_indexing():
         abstract = paper.get("abstract", "")
         lang = paper.get("lang", "")
         urls = paper.get("dblp_url", "")
-        try: fos = [f.strip().lower() for f in ast.literal_eval(paper.get("fos", "[]")) if f]
-        except: fos = []
-        try: keywords = [k.strip().lower() for k in ast.literal_eval(paper.get("keywords", "[]")) if k]
-        except: keywords = []
-        try: authors = ast.literal_eval(paper.get("authors", "[]"))
-        except: authors = []
-        try: venue = ast.literal_eval(paper.get("venue", "{}"))
-        except: venue = {}
-        try: references = ast.literal_eval(paper.get("references", "[]"))
-        except: references = []
+        try:
+            fos = [
+                f.strip().lower() for f in ast.literal_eval(paper.get("fos", "[]")) if f
+            ]
+        except:
+            fos = []
+        try:
+            keywords = [
+                k.strip().lower()
+                for k in ast.literal_eval(paper.get("keywords", "[]"))
+                if k
+            ]
+        except:
+            keywords = []
+        try:
+            authors = ast.literal_eval(paper.get("authors", "[]"))
+        except:
+            authors = []
+        try:
+            venue = ast.literal_eval(paper.get("venue", "{}"))
+        except:
+            venue = {}
+        try:
+            references = ast.literal_eval(paper.get("references", "[]"))
+        except:
+            references = []
 
         return {
             "_id": paper_id,
@@ -101,7 +121,7 @@ def run_indexing():
             "authors": authors,
             "venue": venue,
             "references": references,
-            "urls":urls
+            "urls": urls,
         }
 
     def get_point_id(paper_id):
@@ -121,30 +141,32 @@ def run_indexing():
             embedding_text = f"{paper['title']} {paper['abstract']} {' '.join(paper['keywords'])} {' '.join(paper['fos'])}"
             embedding = model.encode(embedding_text).tolist()
 
-            es_docs.append({
-                "_index": ES_INDEX_NAME,
-                "_id": paper["_id"],
-                "_source": {
-                    "title": paper["title"],
-                    "abstract": paper["abstract"],
-                    "year": paper["year"],
-                    "n_citation": paper["n_citation"],
-                    "doi": paper["doi"],
-                    "lang": paper["lang"],
-                    "keywords": paper["keywords"],
-                    "fos": paper["fos"],
-                    "authors": paper["authors"],
-                    "venue": paper["venue"],
-                    "references": paper["references"],
-                    "urls": paper["dblp_url"]
+            es_docs.append(
+                {
+                    "_index": ES_INDEX_NAME,
+                    "_id": paper["_id"],
+                    "_source": {
+                        "title": paper["title"],
+                        "abstract": paper["abstract"],
+                        "year": paper["year"],
+                        "n_citation": paper["n_citation"],
+                        "doi": paper["doi"],
+                        "lang": paper["lang"],
+                        "keywords": paper["keywords"],
+                        "fos": paper["fos"],
+                        "authors": paper["authors"],
+                        "venue": paper["venue"],
+                        "references": paper["references"],
+                        "urls": paper["urls"],
+                    },
                 }
-            })
+            )
 
-            qdrant_points.append(models.PointStruct(
-                id=get_point_id(paper["_id"]),
-                vector=embedding,
-                payload=paper
-            ))
+            qdrant_points.append(
+                models.PointStruct(
+                    id=get_point_id(paper["_id"]), vector=embedding, payload=paper
+                )
+            )
 
             if len(es_docs) >= BULK_SIZE:
                 helpers.bulk(es, es_docs)

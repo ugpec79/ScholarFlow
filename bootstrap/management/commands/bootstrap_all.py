@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 import os
 from django.conf import settings
 
-from papers import graph, gnn_train
+from papers import gnn_train
 from query import indexing
 from trendrecom.utils import generate_trending_papers
 
@@ -17,9 +17,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             print("🚀 Loading graph data into Neo4j...")
-            graph.run_graph()
+            # graph.run_graph()
 
-            model_path = os.path.join(settings.BASE_DIR, 'contrastive_model.pt')
+            model_path = os.path.join(settings.BASE_DIR, "contrastive_model.pt")
             if not os.path.exists(model_path):
                 print("🚀 Training GNN model...")
                 gnn_train.train_model()

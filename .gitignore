@@ -55,3 +55,14 @@ build/
 
 # Sentry CLI config
 .sentryclirc
+
+# Ruff 
+.ruff_cache
+
+# Data 
+contrastive_model.pt
+trending_papers.csv
+# user_actions.csv
+data/
+embeddings/
+models/

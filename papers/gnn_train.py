@@ -10,6 +10,7 @@ import random
 import pickle
 import os
 
+
 # ---- Reproducibility ----
 def set_seed(seed=42):
     random.seed(seed)
@@ -19,6 +20,8 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
 set_seed()
 
 # ---- Neo4j Driver ----
@@ -30,21 +33,22 @@ EDGE_IMPORTANCE = {
     ("Paper", "HAS_TOPIC", "FOS"): 1.5,
     ("Paper", "HAS_KEYWORD", "Keyword"): 1.5,
     ("Paper", "PUBLISHED_IN", "Venue"): 1.2,
-    ("Paper", "AUTHORED_BY", "Author"): 1.2
+    ("Paper", "AUTHORED_BY", "Author"): 1.2,
 }
+
 
 # ---- Graph Loading ----
 def load_graph_from_neo4j():
     data = HeteroData()
-    node_ids = {ntype: {} for ntype in ['Paper', 'Keyword', 'FOS', 'Venue', 'Author']}
+    node_ids = {ntype: {} for ntype in ["Paper", "Keyword", "FOS", "Venue", "Author"]}
     counters = {k: 0 for k in node_ids}
 
     with driver.session() as session:
         for ntype in node_ids:
-            key = 'name' if ntype in ['Keyword', 'FOS'] else '_id'
+            key = "name" if ntype in ["Keyword", "FOS"] else "_id"
             query = f"MATCH (n:{ntype}) RETURN DISTINCT n.{key} AS id"
             for record in session.run(query):
-                node_ids[ntype][record['id']] = counters[ntype]
+                node_ids[ntype][record["id"]] = counters[ntype]
                 counters[ntype] += 1
             data[ntype].num_nodes = counters[ntype]
 
@@ -58,20 +62,20 @@ def load_graph_from_neo4j():
             ("Paper", "AUTHORED_BY", "Author"),
             ("Author", "AUTHORED", "Paper"),
             ("Paper", "CITES", "Paper"),
-            ("Paper", "CITED_BY", "Paper")
+            ("Paper", "CITED_BY", "Paper"),
         ]
 
         for src, rel, dst in edge_types:
             src_ids, dst_ids = [], []
-            src_key = 'name' if src in ['Keyword', 'FOS'] else '_id'
-            dst_key = 'name' if dst in ['Keyword', 'FOS'] else '_id'
+            src_key = "name" if src in ["Keyword", "FOS"] else "_id"
+            dst_key = "name" if dst in ["Keyword", "FOS"] else "_id"
 
             query = f"""
                 MATCH (a:{src})-[:{rel}]->(b:{dst})
                 RETURN a.{src_key} AS a, b.{dst_key} AS b
             """
             for record in session.run(query):
-                a, b = record['a'], record['b']
+                a, b = record["a"], record["b"]
                 if a in node_ids[src] and b in node_ids[dst]:
                     src_ids.append(node_ids[src][a])
                     dst_ids.append(node_ids[dst][b])
@@ -80,9 +84,12 @@ def load_graph_from_neo4j():
                 edge_index = torch.tensor([src_ids, dst_ids], dtype=torch.long)
                 data[(src, rel, dst)].edge_index = edge_index
                 weight = EDGE_IMPORTANCE.get((src, rel, dst), 1.0)
-                data[(src, rel, dst)].edge_weight = torch.full((edge_index.size(1),), weight)
+                data[(src, rel, dst)].edge_weight = torch.full(
+                    (edge_index.size(1),), weight
+                )
 
     return data, node_ids
+
 
 # ---- Pair Generation ----
 def build_positive_pairs(session, node_ids):
@@ -96,25 +103,44 @@ def build_positive_pairs(session, node_ids):
                 if aid != bid:
                     pairs.add((aid, bid))
 
-    add_pairs("MATCH (a:Paper)-[:CITES]->(b:Paper) RETURN a._id AS a, b._id AS b", "a", "b")
-    add_pairs("""
+    add_pairs(
+        "MATCH (a:Paper)-[:CITES]->(b:Paper) RETURN a._id AS a, b._id AS b", "a", "b"
+    )
+    add_pairs(
+        """
         MATCH (p1:Paper)-[:HAS_KEYWORD]->(k:Keyword)<-[:HAS_KEYWORD]-(p2:Paper)
         RETURN DISTINCT p1._id AS a, p2._id AS b
-    """, "a", "b")
-    add_pairs("""
+    """,
+        "a",
+        "b",
+    )
+    add_pairs(
+        """
         MATCH (p1:Paper)-[:HAS_TOPIC]->(f:FOS)<-[:HAS_TOPIC]-(p2:Paper)
         RETURN DISTINCT p1._id AS a, p2._id AS b
-    """, "a", "b")
-    add_pairs("""
+    """,
+        "a",
+        "b",
+    )
+    add_pairs(
+        """
         MATCH (p1:Paper)-[:PUBLISHED_IN]->(v:Venue)<-[:PUBLISHED_IN]-(p2:Paper)
         RETURN DISTINCT p1._id AS a, p2._id AS b
-    """, "a", "b")
-    add_pairs("""
+    """,
+        "a",
+        "b",
+    )
+    add_pairs(
+        """
         MATCH (p1:Paper)-[:AUTHORED_BY]->(a:Author)<-[:AUTHORED_BY]-(p2:Paper)
         RETURN DISTINCT p1._id AS a, p2._id AS b
-    """, "a", "b")
+    """,
+        "a",
+        "b",
+    )
 
     return list(pairs)
+
 
 def build_negative_pairs(num_nodes, positive_pairs, num_samples=10000):
     mask = np.zeros((num_nodes, num_nodes), dtype=bool)
@@ -137,6 +163,7 @@ def build_negative_pairs(num_nodes, positive_pairs, num_samples=10000):
 
     return neg_pairs
 
+
 # ---- Model ----
 class WeightedHGTConv(HGTConv):
     def forward(self, x_dict, edge_index_dict, edge_weight_dict=None):
@@ -148,25 +175,30 @@ class WeightedHGTConv(HGTConv):
                         out[ntype] *= weight
         return out
 
+
 class HGTModel(Module):
     def __init__(self, metadata, hidden_channels=64, out_channels=64, num_layers=2):
         super().__init__()
-        self.convs = torch.nn.ModuleList([
-            WeightedHGTConv(
-                in_channels={nt: hidden_channels for nt in metadata[0]},
-                out_channels=hidden_channels,
-                metadata=metadata,
-                heads=2
-            ) for _ in range(num_layers)
-        ])
-        self.lin_dict = torch.nn.ModuleDict({
-            ntype: Linear(hidden_channels, out_channels) for ntype in metadata[0]
-        })
+        self.convs = torch.nn.ModuleList(
+            [
+                WeightedHGTConv(
+                    in_channels={nt: hidden_channels for nt in metadata[0]},
+                    out_channels=hidden_channels,
+                    metadata=metadata,
+                    heads=2,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.lin_dict = torch.nn.ModuleDict(
+            {ntype: Linear(hidden_channels, out_channels) for ntype in metadata[0]}
+        )
 
     def forward(self, x_dict, edge_index_dict, edge_weight_dict=None):
         for conv in self.convs:
             x_dict = conv(x_dict, edge_index_dict, edge_weight_dict)
         return {k: self.lin_dict[k](v) for k, v in x_dict.items()}
+
 
 class ContrastiveLoss(Module):
     def __init__(self, temperature=0.5):
@@ -178,6 +210,7 @@ class ContrastiveLoss(Module):
         z2 = F.normalize(z2, dim=1)
         sim = torch.sum(z1 * z2, dim=1) / self.temperature
         return F.binary_cross_entropy_with_logits(sim, label.float())
+
 
 # ---- Training ----
 def train_model(epochs=100):
@@ -192,14 +225,18 @@ def train_model(epochs=100):
 
     with driver.session() as session:
         pos_pairs = build_positive_pairs(session, node_ids)
-        neg_pairs = build_negative_pairs(data["Paper"].num_nodes, pos_pairs, len(pos_pairs))
+        neg_pairs = build_negative_pairs(
+            data["Paper"].num_nodes, pos_pairs, len(pos_pairs)
+        )
         all_pairs = pos_pairs + neg_pairs
         labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
 
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
-        out = model(data.collect('x'), data.collect('edge_index'), data.collect('edge_weight'))
+        out = model(
+            data.collect("x"), data.collect("edge_index"), data.collect("edge_weight")
+        )
 
         z = out["Paper"]
         z1 = torch.stack([z[a] for a, b in all_pairs])
@@ -215,4 +252,4 @@ def train_model(epochs=100):
     os.makedirs("embeddings", exist_ok=True)
     torch.save(model.state_dict(), "contrastive_model.pt")
     with open("embeddings/contrastive_embeddings.pkl", "wb") as f:
-        pickle.dump((out['Paper'].detach(), node_ids['Paper']), f)
+        pickle.dump((out["Paper"].detach(), node_ids["Paper"]), f)

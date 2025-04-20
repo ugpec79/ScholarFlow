@@ -13,21 +13,28 @@ import os
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
 
+
 def generate_user_features():
     # Load articles
     articles = pd.read_csv("cleaned_data.csv")
     articles = articles.dropna(subset=["title", "abstract"])
-    articles["fos"] = articles["fos"].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else [])
-    articles["keywords"] = articles["keywords"].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else [])
+    articles["fos"] = articles["fos"].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) else []
+    )
+    articles["keywords"] = articles["keywords"].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) else []
+    )
 
     # Venue popularity
     venue_popularity = articles["venue"].value_counts().to_dict()
-    articles["venue_popularity"] = articles["venue"].map(lambda v: venue_popularity.get(v, 0))
+    articles["venue_popularity"] = articles["venue"].map(
+        lambda v: venue_popularity.get(v, 0)
+    )
 
     # Load user interactions
     def load_user_interactions(path="user_actions.csv"):
         rows = []
-        with open(path, newline='') as f:
+        with open(path, newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 rows.append(row)
@@ -36,12 +43,14 @@ def generate_user_features():
     interactions = load_user_interactions()
 
     # Initial action weights (base labels before sentiment boost)
-    action_weights = {'LIKE': 2, 'CLICKED': 1, 'COMMENT': 0, 'DISLIKE': 0}
-    interactions['label'] = interactions['action'].map(action_weights).astype(float)
+    action_weights = {"LIKE": 2, "CLICKED": 1, "COMMENT": 0, "DISLIKE": 0}
+    interactions["label"] = interactions["action"].map(action_weights).astype(float)
 
     # Perform real sentiment analysis on comments
     print("🔍 Performing batched sentiment analysis using DistilBERT...")
-    sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+    sentiment_pipeline = pipeline(
+        "sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english"
+    )
     interactions["sentiment_score"] = 0.0
 
     comments = interactions["comment"].fillna("").tolist()
@@ -58,21 +67,23 @@ def generate_user_features():
 
     # Aggregate by (user, paper)
     agg_interactions = (
-        interactions.groupby(['user_id', 'paper_id'])
-        .agg({
-            'label': 'max',
-            'sentiment_score': 'mean'
-        }).reset_index()
+        interactions.groupby(["user_id", "paper_id"])
+        .agg({"label": "max", "sentiment_score": "mean"})
+        .reset_index()
     )
 
     # Load and embed articles
     print("💡 Encoding article text embeddings...")
     model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
     articles["content"] = articles["title"] + ". " + articles["abstract"]
-    articles["embedding"] = list(model.encode(articles["content"].tolist(), show_progress_bar=True))
+    articles["embedding"] = list(
+        model.encode(articles["content"].tolist(), show_progress_bar=True)
+    )
 
     # Merge user interactions with article metadata
-    merged = agg_interactions.merge(articles, left_on="paper_id", right_on="_id", how="inner")
+    merged = agg_interactions.merge(
+        articles, left_on="paper_id", right_on="_id", how="inner"
+    )
 
     # Build user profiles: embeddings, FOS, and keywords
     user_profiles = {}
@@ -99,12 +110,16 @@ def generate_user_features():
 
     def compute_fos_overlap(row):
         user_set = user_fos.get(row["user_id"], set())
-        return len(user_set.intersection(set(row["fos"]))) / (len(user_set.union(set(row["fos"]))) + 1e-5)
+        return len(user_set.intersection(set(row["fos"]))) / (
+            len(user_set.union(set(row["fos"]))) + 1e-5
+        )
 
     def compute_keyword_match(row):
         user_kw = user_keywords.get(row["user_id"], set())
         paper_kw = set(row["keywords"])
-        return len(user_kw.intersection(paper_kw)) / (len(user_kw.union(paper_kw)) + 1e-5)
+        return len(user_kw.intersection(paper_kw)) / (
+            len(user_kw.union(paper_kw)) + 1e-5
+        )
 
     print("🔧 Computing feature similarity metrics...")
     merged["content_sim"] = merged.apply(compute_similarity, axis=1)
@@ -112,18 +127,20 @@ def generate_user_features():
     merged["keyword_match"] = merged.apply(compute_keyword_match, axis=1)
 
     # Final feature table
-    features = pd.DataFrame({
-        "user_id": merged["user_id"],
-        "article_id": merged["_id"],
-        "label": merged["label"],
-        "sentiment_score": merged["sentiment_score"],
-        "n_citation": merged["n_citation"].astype(float),
-        "year": merged["year"].astype(int),
-        "venue_popularity": merged["venue_popularity"],
-        "content_sim": merged["content_sim"],
-        "fos_overlap": merged["fos_overlap"],
-        "keyword_match": merged["keyword_match"]
-    })
+    features = pd.DataFrame(
+        {
+            "user_id": merged["user_id"],
+            "article_id": merged["_id"],
+            "label": merged["label"],
+            "sentiment_score": merged["sentiment_score"],
+            "n_citation": merged["n_citation"].astype(float),
+            "year": merged["year"].astype(int),
+            "venue_popularity": merged["venue_popularity"],
+            "content_sim": merged["content_sim"],
+            "fos_overlap": merged["fos_overlap"],
+            "keyword_match": merged["keyword_match"],
+        }
+    )
 
     # Encode IDs for ranking model
     le_user = LabelEncoder()
@@ -148,7 +165,7 @@ def train_ranking_model():
         "venue_popularity",
         "content_sim",
         "fos_overlap",
-        "keyword_match"
+        "keyword_match",
     ]
     X = data[feature_cols]
     y = data["label"]
@@ -156,13 +173,13 @@ def train_ranking_model():
 
     # Split Data for Validation
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.1, random_state=42
+        X, y, test_size=0.01, random_state=42
     )
 
     # Group info (re-calculated for split)
     user_ids = data["user_id_enc"].values
-    train_user_ids = user_ids[:len(X_train)]
-    val_user_ids = user_ids[len(X_train):]
+    train_user_ids = user_ids[: len(X_train)]
+    val_user_ids = user_ids[len(X_train) :]
 
     train_group = pd.Series(train_user_ids).value_counts().sort_index().tolist()
     val_group = pd.Series(val_user_ids).value_counts().sort_index().tolist()
@@ -191,7 +208,7 @@ def train_ranking_model():
         train_data,
         valid_sets=[train_data, val_data],
         valid_names=["train", "val"],
-        num_boost_round=300
+        num_boost_round=300,
     )
 
     # Save Model
