@@ -5,6 +5,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import redis
 import requests
 from django.conf import settings  # Import settings
+from django.core.cache import cache
 
 # --- Configuration ---
 ES_URL = settings.ES_URL
@@ -23,6 +24,7 @@ es = Elasticsearch(ES_URL, request_timeout=30)
 qdrant = QdrantClient(QDRANT_URL, port=QDRANT_PORT)
 rds = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 model = SentenceTransformer(EMBEDDING_MODEL)
+CACHE_TTL = 3600
 
 
 # --- Redis Query Tracker ---
@@ -65,7 +67,6 @@ def get_explanation_for_result(
         return f"Error generating explanation: {response.status_code}"
 
 
-# !
 # --- Hybrid Search (Elasticsearch + Qdrant) ---
 def hybrid_search(query, top_k=10, w1=0.5, w2=0.5):
     es_query = {
@@ -128,11 +129,19 @@ def hybrid_search(query, top_k=10, w1=0.5, w2=0.5):
     )[:top_k]
 
 
-# --- Fetch Past Query Related Results ---
 def fetch_similar_results_with_scores(
     user_id, current_query, similarity_threshold=0.5, top_k=10
 ):
+    # 1. Build a unique cache key
+    cache_key = f"user_sim:{user_id}:{current_query}:{similarity_threshold}:{top_k}"
+    # 2. Return cached if exists
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # --- original logic ---
     past_queries = [q.decode() for q in get_past_queries(user_id)]
+    CACHE_TTL = 3600
     current_embedding = model.encode(current_query).reshape(1, -1)
 
     combined_results = []
@@ -148,6 +157,9 @@ def fetch_similar_results_with_scores(
                     res["query_similarity"] = sim_score
                     seen_ids.add(res["_id"])
                     combined_results.append(res)
+
+    # 3. Cache the computed result
+    cache.set(cache_key, combined_results, CACHE_TTL)
 
     return combined_results
 

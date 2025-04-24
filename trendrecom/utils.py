@@ -10,6 +10,7 @@ import os
 def generate_trending_papers():
     # --- Step 1: Load Paper Data ---
     papers = pd.read_csv("cleaned_data.csv")
+    papers= papers.head(1000)
     papers["publish_date"] = pd.to_datetime(
         papers["year"].astype(str) + "-01-01", errors="coerce"
     )

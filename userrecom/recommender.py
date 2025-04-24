@@ -9,6 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from transformers import pipeline
 import lightgbm as lgb
 from django.conf import settings  # Import settings
+from django.core.cache import cache  # Django cache
 
 # --- Constants ---
 MODEL_PATH = "models/ltr_model.txt"
@@ -17,6 +18,7 @@ INTERACTIONS_PATH = "user_actions.csv"
 EMBEDDINGS_CACHE = "data/article_embeddings.pkl"
 TOP_N = 10
 LLAMA_API = settings.LLAMA_API  # Ollama REST API
+CACHE_TTL = 3600  # cache duration for recommendations
 
 
 def generate_llama_explanation(article, user_info):
@@ -54,7 +56,6 @@ Using this information, write a short, clear explanation (2-3 sentences) for why
         return "Explanation not available."
 
 
-# --- Load or generate article embeddings ---
 def load_or_generate_article_embeddings(force_refresh=False):
     if not force_refresh and os.path.exists(EMBEDDINGS_CACHE):
         print("📦 Loading cached article embeddings...")
@@ -98,15 +99,18 @@ def load_or_generate_article_embeddings(force_refresh=False):
     return articles
 
 
-# !
-# --- Main Recommendation Function ---
+# --- Main Recommendation Function with Caching ---
 def get_user_recommendations(user_id, top_n=TOP_N):
+    cache_key = f"user_recs:{user_id}:{top_n}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     model = lgb.Booster(model_file=MODEL_PATH)
     articles = load_or_generate_article_embeddings()
 
     interactions = pd.read_csv(INTERACTIONS_PATH)
     interactions = interactions[interactions["user_id"] == user_id]
-
     if interactions.empty:
         return []
 
@@ -144,7 +148,6 @@ def get_user_recommendations(user_id, top_n=TOP_N):
 
     user_embed = np.sum(embed_acc, axis=0) / np.sum(interactions["weight"])
     seen_ids = set(interactions["paper_id"])
-
     candidates = articles[~articles["_id"].isin(seen_ids)].copy()
 
     def compute_content_sim(row):
@@ -179,7 +182,6 @@ def get_user_recommendations(user_id, top_n=TOP_N):
     candidates["score"] = model.predict(X_test)
 
     top_n_results = candidates.sort_values("score", ascending=False).head(top_n)
-
     recommendations = []
     user_info = {"fos": list(fos_set), "keywords": list(keyword_set)}
 
@@ -197,4 +199,5 @@ def get_user_recommendations(user_id, top_n=TOP_N):
             }
         )
 
+    cache.set(cache_key, recommendations, CACHE_TTL)
     return recommendations

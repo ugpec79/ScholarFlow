@@ -4,6 +4,7 @@ import pickle
 import requests
 from sklearn.metrics.pairwise import cosine_similarity
 from neo4j import GraphDatabase
+from django.core.cache import cache
 from .gnn_train import HGTModel, load_graph_from_neo4j
 from django.http import JsonResponse
 
@@ -11,6 +12,7 @@ from django.http import JsonResponse
 LLAMA_API = "http://localhost:11434/api/generate"
 EMBEDDING_FILE = "embeddings/paper_embeddings.pt"
 ID_MAP_FILE = "embeddings/paper_id_map.pkl"
+CACHE_TTL = 3600  # cache timeout in seconds (1 hour)
 
 # Neo4j
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
@@ -89,7 +91,7 @@ def recommend_similar_papers(paper_id, top_k=5):
 def generate_llama_explanation(
     input_paper, recommended_paper, similarity_score, common_connections
 ):
-    # Construct a detailed prompt considering all possible connections
+    # (unchanged prompt construction)
     prompt = f"""
 You are an academic assistant. Explain why the following research paper was recommended based on both semantic similarity and graph-based relationships like common keywords, fields of study (FoS), venues, authors, and citations.
 
@@ -131,67 +133,81 @@ Write a short, human-readable explanation (1–2 sentences) about why this paper
         return f"Explanation generation failed: {e}"
 
 
-# !
 def get_recommendations_data(paper_id, top_k=5):
-    try:
-        ensure_embeddings()
-        recommendations = recommend_similar_papers(paper_id, top_k)
-        paper_ids = [paper_id] + [pid for pid, _ in recommendations]
-        all_papers = fetch_paper_details(paper_ids)
+    # Check cache first
+    cache_key = f"recommendations:{paper_id}:{top_k}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
 
-        input_paper = all_papers.get(paper_id, {})
+    ensure_embeddings()
+    recommendations = recommend_similar_papers(paper_id, top_k)
+    paper_ids = [paper_id] + [pid for pid, _ in recommendations]
+    all_papers = fetch_paper_details(paper_ids)
 
-        rec_data = []
-        for pid, sim in recommendations:
-            rec_paper = all_papers.get(pid, {})
-
-            # Identify common connections
-            common_connections = {
-                "venue": input_paper.get("venue", "") == rec_paper.get("venue", ""),
-                "authors": list(
-                    set(input_paper.get("authors", []))
-                    & set(rec_paper.get("authors", []))
-                ),
-                "keywords": list(
-                    set(input_paper.get("keywords", []))
-                    & set(rec_paper.get("keywords", []))
-                ),
-                "fos": list(
-                    set(input_paper.get("fos", [])) & set(rec_paper.get("fos", []))
-                ),
-                "citation": input_paper.get("citations", 0) > 0
-                and rec_paper.get("citations", 0)
-                > 0,  # This is a simple citation-based check
-            }
-
-            explanation = generate_llama_explanation(
-                input_paper, rec_paper, sim, common_connections
-            )
-            rec_data.append(
-                {
-                    "id": pid,
-                    "similarity": sim,
-                    "title": rec_paper.get("title", "Unknown"),
-                    "venue": rec_paper.get("venue", ""),
-                    "year": rec_paper.get("year", ""),
-                    "citations": rec_paper.get("n_citation", 0),
-                    "explanation": explanation,
-                }
-            )
-
-        return {
-            "input_paper": {
-                "id": paper_id,
-                "title": input_paper.get("title", "Unknown"),
-            },
-            "recommendations": rec_data,
+    input_paper = all_papers.get(paper_id, {})
+    rec_data = []
+    for pid, sim in recommendations:
+        rec_paper = all_papers.get(pid, {})
+        common_connections = {
+            "venue": input_paper.get("venue", "") == rec_paper.get("venue", ""),
+            "authors": list(
+                set(input_paper.get("authors", [])) & set(rec_paper.get("authors", []))
+            ),
+            "keywords": list(
+                set(input_paper.get("keywords", []))
+                & set(rec_paper.get("keywords", []))
+            ),
+            "fos": list(
+                set(input_paper.get("fos", [])) & set(rec_paper.get("fos", []))
+            ),
+            "citation": input_paper.get("citations", 0) > 0
+            and rec_paper.get("citations", 0) > 0,
         }
+        explanation = generate_llama_explanation(
+            input_paper, rec_paper, sim, common_connections
+        )
+        rec_data.append(
+            {
+                "id": pid,
+                "similarity": sim,
+                "title": rec_paper.get("title", "Unknown"),
+                "venue": rec_paper.get("venue", ""),
+                "year": rec_paper.get("year", ""),
+                "citations": rec_paper.get("n_citation", 0),
+                "explanation": explanation,
+            }
+        )
 
-    except Exception as e:
-        return {"error": str(e)}
+    # Prepare result
+    result = {
+        "input_paper": {
+            "id": paper_id,
+            "title": input_paper.get("title", "Unknown"),
+            "year": int(input_paper.get("year", 0))
+            if input_paper.get("year")
+            else None,
+            "n_citation": int(input_paper.get("n_citation", 0))
+            if input_paper.get("n_citation")
+            else 0,
+            "doi": input_paper.get("doi", ""),
+            "abstract": input_paper.get("abstract", ""),
+            "lang": input_paper.get("lang", ""),
+            "url": input_paper.get("url", ""),
+            "fos": input_paper.get("fos", []),
+            "keywords": input_paper.get("keywords", []),
+            "authors": input_paper.get("authors", []),
+            "venue": input_paper.get("venue", {}),
+            "references": input_paper.get("references", []),
+        },
+        "recommendations": rec_data,
+    }
+
+    # Cache the result
+    cache.set(cache_key, result, CACHE_TTL)
+    return result
 
 
-# Django view
 def get_recommendations(request, paper_id):
     response_data = get_recommendations_data(paper_id)
     return JsonResponse(response_data, safe=False)
